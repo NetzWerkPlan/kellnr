@@ -1,15 +1,28 @@
 # ----------- Builder stage -----------
 FROM rust:slim-bookworm AS builder
 
-# Install musl-tools and build dependencies for static linking
-RUN apt-get update && apt-get install -y musl-tools perl clang make gcc pkg-config curl
+ARG INCLUDE_CA_CERT=false
+ARG NODE_VERSION="23.2.0"
+ARG KELLNR_VERSION="0.0.0-unknown"
 
-# Install nodejs and npm for UI build
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs
+RUN apt-get update && apt-get install -y musl-tools perl clang make gcc pkg-config curl \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install latest nodejs version with nvm
+ENV NVM_DIR="/root/.nvm"
+ENV NODE_VERSION="23.2.0"
+RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash \
+  && . "$NVM_DIR/nvm.sh" \
+  && nvm install $NODE_VERSION \
+  && nvm alias default $NODE_VERSION \
+  && nvm use $NODE_VERSION
+ENV NODE_PATH="$NVM_DIR/versions/node/$NODE_VERSION/lib/node_modules"
+ENV PATH="$NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH"
 
 # Set environment variables for static linking
 ENV OPENSSL_STATIC=1
 ENV SQLITE3_STATIC=1
+ENV KELLNR_VERSION=$KELLNR_VERSION
 
 # Add musl target
 RUN rustup target add x86_64-unknown-linux-musl
@@ -26,15 +39,20 @@ RUN npm run build
 WORKDIR /app
 RUN cargo build --release --target x86_64-unknown-linux-musl --features vendored-openssl
 
+# Create writeable default storage directory in builder stage
+RUN mkdir -p /opt/kdata && chown 65532:65532 /opt/kdata
+
 # ----------- Distroless stage -----------
 FROM gcr.io/distroless/static-debian12:nonroot
 
 WORKDIR /opt/kellnr
 
-# Copy the statically linked binary
 COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/kellnr ./kellnr
 COPY --from=builder /app/config/default.toml ./config/default.toml
 COPY --from=builder /app/ui/dist ./static
+
+COPY --from=builder /opt/kdata /opt/kdata
+VOLUME ["/opt/kdata"]
 
 EXPOSE 8000
 
