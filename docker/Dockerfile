@@ -1,38 +1,41 @@
-##################
-# Runtime image  #
-##################
+# ----------- Builder stage -----------
+FROM rust:slim-bookworm AS builder
 
-FROM rust:slim-bookworm
+# Install musl-tools and build dependencies for static linking
+RUN apt-get update && apt-get install -y musl-tools perl clang make gcc pkg-config curl
 
-ARG ADMINPWD=admin
-ENV INSTALLDIR=/opt
-ENV DATADIR=/opt/kdata
-ARG AUTHTOKEN=Zy9HhJ02RJmg0GCrgLfaCVfU6IwDfhXD
-ARG VERSION
+# Install nodejs and npm for UI build
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs
 
-RUN apt update
-RUN apt install -y \ 
-  curl \
-  sed \
-  git \
-  zip \
-  apt-utils \
-  build-essential \
-  llvm-dev \
-  libclang-dev \
-  clang \
-  cmake \
-  pkg-config \
-  libssl-dev
+# Set environment variables for static linking
+ENV OPENSSL_STATIC=1
+ENV SQLITE3_STATIC=1
 
-WORKDIR ${INSTALLDIR}
-RUN curl -s https://raw.githubusercontent.com/kellnr/installer/main/install.sh | bash -s -- -d ${DATADIR} -p ${ADMINPWD} -t ${AUTHTOKEN} -v ${VERSION}
-RUN rm *.zip
-RUN rustup component add rust-src
+# Add musl target
+RUN rustup target add x86_64-unknown-linux-musl
 
-HEALTHCHECK --interval=5m --timeout=3s CMD curl -f http://localhost:8000/api/v1/health || exit 1
+WORKDIR /app
+COPY . .
+
+# Build the UI
+WORKDIR /app/ui
+RUN npm install
+RUN npm run build
+
+# Build the release binary for musl (static)
+WORKDIR /app
+RUN cargo build --release --target x86_64-unknown-linux-musl --features vendored-openssl
+
+# ----------- Distroless stage -----------
+FROM gcr.io/distroless/static-debian12:nonroot
+
+WORKDIR /opt/kellnr
+
+# Copy the statically linked binary
+COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/kellnr ./kellnr
+COPY --from=builder /app/config/default.toml ./config/default.toml
+COPY --from=builder /app/ui/dist ./static
 
 EXPOSE 8000
 
-WORKDIR ${INSTALLDIR}/kellnr
-ENTRYPOINT ["/bin/sh", "-c" , "update-ca-certificates && ./kellnr"]
+ENTRYPOINT ["/opt/kellnr/kellnr"]

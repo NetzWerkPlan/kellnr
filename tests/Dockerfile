@@ -9,26 +9,21 @@
 #  Build image  #
 #################
 
+# ----------- Builder stage -----------
 FROM rust:slim-bookworm AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Europe/Berlin
 
-ARG KELLNR_VERSION="0.0.0-unknown"
-ENV KELLNR_VERSION=$KELLNR_VERSION
+# Install musl-tools and build dependencies for static linking
+RUN apt-get update && apt-get install -y musl-tools perl clang make gcc pkg-config curl
 
-RUN apt update
-RUN apt install -y -q --no-install-recommends \
-  ca-certificates \
-  git \
-  curl \
-  sed \
-  build-essential \
-  pkg-config \
-  openssl \
-  libssl-dev \
-  gcc \
-  && rm -rf /var/lib/apt/lists/*
+# Set environment variables for static linking
+ENV OPENSSL_STATIC=1
+ENV SQLITE3_STATIC=1
+
+# Add musl target
+RUN rustup target add x86_64-unknown-linux-musl
 
 # Install latest nodejs version with nvm
 ENV NVM_DIR="/root/.nvm"
@@ -40,6 +35,7 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | b
   && nvm use $NODE_VERSION
 ENV NODE_PATH="$NVM_DIR/versions/node/$NODE_VERSION/lib/node_modules"
 ENV PATH="$NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH"
+
 COPY . /sources
 
 # Build the UI
@@ -47,30 +43,20 @@ WORKDIR /sources/ui
 RUN npm install
 RUN npm run build
 
-
-# Build kellnr
+# Build kellnr (static musl)
 WORKDIR /sources
-RUN cargo build --release --features "vendored-openssl"
+RUN cargo build --release --target x86_64-unknown-linux-musl --features vendored-openssl
 
+# ----------- Distroless stage -----------
+FROM gcr.io/distroless/static-debian12:nonroot
 
-##################
-# Runtime image  #
-##################
-
-FROM rust:slim-bookworm
-
-RUN mkdir -p /opt/kellnr
-RUN rustup component add rust-src
 WORKDIR /opt/kellnr
-COPY --from=builder /sources/target/release/kellnr ./kellnr
+
+COPY --from=builder /sources/target/x86_64-unknown-linux-musl/release/kellnr ./kellnr
 COPY --from=builder /sources/config/default.toml ./config/default.toml
 COPY --from=builder /sources/ui/dist ./static
-
-COPY tests/ca.crt /usr/local/share/ca-certificates/ca.crt
-RUN update-ca-certificates
-
-HEALTHCHECK --interval=5m --timeout=3s CMD curl -f http://localhost:8000/api/v1/health || exit 1
+COPY --from=builder /sources/tests/ca.crt /usr/local/share/ca-certificates/ca.crt
 
 EXPOSE 8000
 
-ENTRYPOINT ["/bin/sh", "-c" , "update-ca-certificates && ./kellnr"]
+ENTRYPOINT ["/opt/kellnr/kellnr"]
