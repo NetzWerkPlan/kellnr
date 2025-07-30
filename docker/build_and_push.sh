@@ -41,7 +41,7 @@ function build_and_push {
   docker buildx build . --build-arg VERSION="$VERSION" \
     --push \
     --platform linux/arm/v7,linux/arm64/v8,linux/amd64 \
-    -f "./docker/Dockerfile" \
+    -f "./docker/Dockerfile.minimal" \
     $TAGS
   cd - || exit
 }

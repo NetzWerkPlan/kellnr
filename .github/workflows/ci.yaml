@@ -1,154 +1,20 @@
 name: kellnr-ci
 on:
-  push:
-   branches:
-     - main
-  pull_request:
-    branches:
-      - main
-      - devel
   release:
     types:
       - published
 
-env:
-  CARGO_TERM_COLOR: always
 
 jobs:
-  test-kellnr:
-    name: Unit Tests
-    runs-on: ubuntu-24.04
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - uses: cachix/install-nix-action@v31
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-
-      - name: Smoke Test
-        run: nix develop --command just test
-
-  test-kellnr-pgdb:
-    name: Postgresql Tests
-    runs-on: ubuntu-24.04
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - uses: cachix/install-nix-action@v31
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-
-      - name: Smoke Test
-        run: nix develop --command just test-pgdb
-
-  test-kellnr-smoke:
-    name: Smoke Test
-    runs-on: ubuntu-24.04
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - uses: cachix/install-nix-action@v31
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-
-      - name: Smoke Test
-        run: nix develop --command just test-smoke
-
-  build-kellnr:
-    name: Kellnr Build
-    if: github.event_name == 'release'
-    runs-on: ubuntu-24.04
-    strategy:
-      matrix:
-        target:
-          [
-            "x86_64-unknown-linux-gnu",
-            "x86_64-unknown-linux-musl",
-            "aarch64-unknown-linux-gnu",
-            "aarch64-unknown-linux-musl",
-          ]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Update APT Repositories
-        run: sudo apt update
-
-      - name: Install dependencies
-        run: sudo apt install -y sed zip
-
-      - name: Install Just
-        uses: taiki-e/install-action@v2
-        with:
-          tool: just
-
-      - name: Setup Rust
-        uses: hecrj/setup-rust-action@v2
-
-      - name: Add Rust Targets
-        run: rustup target add ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install cross-rs
-        run: cargo install cross
-
-      - name: Extract Version
-        run: |
-          echo "KELLNR_VERSION=${GITHUB_REF#refs/*/v}" >> $GITHUB_ENV
-          echo $KELLNR_VERSION
-
-      - name: Build Release {{ matrix.target }}
-        run: just target=${{ matrix.target }} ci-release
-
-      - name: Set Packagename
-        run: echo "KELLNR_PACKAGE=kellnr-${{ matrix.target }}-$KELLNR_VERSION.zip" >> $GITHUB_ENV
-
-      - name: Print Packagename
-        run: echo $KELLNR_PACKAGE
-
-      - name: Package Resources
-        uses: montudor/action-zip@v0.1.1
-        with:
-          args: zip -qq -r ${{ env.KELLNR_PACKAGE }} static config
-
-      - name: Package Kellnr
-        uses: montudor/action-zip@v0.1.1
-        with:
-          args: zip -qq -j ${{ env.KELLNR_PACKAGE }} target/${{ matrix.target }}/release/kellnr
-
-      - name: Set Asset Name
-        run: echo "KELLNR_ASSET=kellnr-${{ matrix.target }}.zip" >> $GITHUB_ENV
-
-      - name: Upload binaries to release
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ env.KELLNR_PACKAGE }}
-          asset_name: ${{ env.KELLNR_ASSET }}
-          tag: ${{ github.ref }}
-
   build-and-push-image:
     name: Build and Push Image
     if: github.event_name == 'release'
     runs-on: ubuntu-24.04
-    needs:
-      - build-kellnr
-      - test-kellnr
-      - test-kellnr-pgdb
-      - test-kellnr-smoke
     permissions:
       packages: write
       contents: read
     env:
-      IMAGE: ghcr.io/kellnr/kellnr
+      IMAGE: ghcr.io/matt-mai/kellnr
 
     steps:
       - name: Checkout
