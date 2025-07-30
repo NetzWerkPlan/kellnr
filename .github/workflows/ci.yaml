@@ -14,7 +14,7 @@ jobs:
       packages: write
       contents: read
     env:
-      IMAGE: ghcr.io/matt-mai/kellnr
+      IMAGE: ghcr.io/NetzWerkPlan/kellnr
 
     steps:
       - name: Checkout
